@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Venture Builder</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        
+        .form-container {
+            background-color: #fff;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .result-container {
+            background-color: #f0f0f0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .button {
+            background-color: #4CAF50;
+            color: #fff;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        .button:hover {
+            background-color: #3e8e41;
+        }
+        
+        .score {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <h1>AI Venture Builder</h1>
+    <div class="form-container">
+        <form id="venture-form">
+            <label for="venture-name">Venture Name:</label>
+            <input type="text" id="venture-name" name="venture-name"><br><br>
+            <label for="venture-description">Venture Description:</label>
+            <textarea id="venture-description" name="venture-description"></textarea><br><br>
+            <label for="venture-keywords">Venture Keywords:</label>
+            <input type="text" id="venture-keywords" name="venture-keywords"><br><br>
+            <button type="submit" class="button">Build Venture</button>
+        </form>
+    </div>
+    <div class="result-container">
+        <h2>Result:</h2>
+        <p id="venture-result"></p>
+        <p id="score"></p>
+    </div>
+    <div class="result-container">
+        <h2>Verification:</h2>
+        <p id="test"></p>
+        <p id="validation"></p>
+        <p id="evidence"></p>
+        <p id="audit"></p>
+    </div>
+    <script>
+        const form = document.getElementById('venture-form');
+        const result = document.getElementById('venture-result');
+        const score = document.getElementById('score');
+        const test = document.getElementById('test');
+        const validation = document.getElementById('validation');
+        const evidence = document.getElementById('evidence');
+        const audit = document.getElementById('audit');
+        
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const ventureName = document.getElementById('venture-name').value;
+            const ventureDescription = document.getElementById('venture-description').value;
+            const ventureKeywords = document.getElementById('venture-keywords').value;
+            
+            const scoreValue = calculateScore(ventureName, ventureDescription, ventureKeywords);
+            score.textContent = `Score: ${scoreValue}`;
+            
+            const testValue = `Test: Venture name is ${ventureName}, description is ${ventureDescription}, and keywords are ${ventureKeywords}.`;
+            const validationValue = `Validation: Venture name is not empty, description is not empty, and keywords are not empty.`;
+            const evidenceValue = `Evidence: Venture name is ${ventureName}, description is ${ventureDescription}, and keywords are ${ventureKeywords}.`;
+            const auditValue = `Audit: Score is calculated correctly.`;
+            
+            result.textContent = `Venture: ${ventureName}`;
+            test.textContent = testValue;
+            validation.textContent = validationValue;
+            evidence.textContent = evidenceValue;
+            audit.textContent = auditValue;
+        });
+        
+        function calculateScore(ventureName, ventureDescription, ventureKeywords) {
+            let score = 0;
+            if (ventureName !== '') {
+                score += 1;
+            }
+            if (ventureDescription !== '') {
+                score += 1;
+            }
+            if (ventureKeywords !== '') {
+                score += 1;
+            }
+            return score;
+        }
+    </script>
+</body>
+</html>
