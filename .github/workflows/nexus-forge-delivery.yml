@@ -11,6 +11,10 @@ on:
         description: 'NEXUS FORGE delivery ID'
         required: true
         type: string
+      callback_origin:
+        description: 'Originating managed Convex callback origin'
+        required: false
+        type: string
       artifact_ref:
         description: 'Delivered artifact path'
         required: true
@@ -22,7 +26,7 @@ permissions:
   id-token: write
 
 env:
-  CONVEX_SITE_URL: ${{ secrets.CONVEX_SITE_URL }}
+  CONVEX_SITE_URL: ${{ inputs.callback_origin || secrets.CONVEX_SITE_URL }}
   NEXUS_FORGE_DELIVERY_SECRET: ${{ secrets.NEXUS_FORGE_DELIVERY_SECRET }}
 
 concurrency:
@@ -36,6 +40,12 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Validate callback origin
+        run: |
+          case "$CONVEX_SITE_URL" in
+            https://quick-rabbit-810.eu-west-1.convex.site|https://tame-rat-826.eu-west-1.convex.site) ;;
+            *) echo "Callback origin is not allowlisted"; exit 1 ;;
+          esac
       - name: Checkout delivered artifact
         uses: actions/checkout@v4
 
@@ -154,6 +164,12 @@ jobs:
     needs: build-test-deploy
     if: ${{ failure() }}
     steps:
+      - name: Validate callback origin
+        run: |
+          case "$CONVEX_SITE_URL" in
+            https://quick-rabbit-810.eu-west-1.convex.site|https://tame-rat-826.eu-west-1.convex.site) ;;
+            *) echo "Callback origin is not allowlisted"; exit 1 ;;
+          esac
       - name: Report failed delivery to Convex
         env:
           DELIVERY_ID: ${{ inputs.delivery_id }}
