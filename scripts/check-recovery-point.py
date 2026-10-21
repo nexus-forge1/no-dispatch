@@ -48,6 +48,9 @@ def inspect_archive(path):
                 payloads[PurePosixPath(name).name.split(".", 1)[0]] = {"bytes": size, "sha256": h.hexdigest()}
             if len(parts) == 2 and parts[1] == "documents.jsonl":
                 table = parts[0]
+                if table == "_storage":
+                    # Convex --include-file-storage writes storage metadata here; not a document table in the export registry.
+                    continue
                 rows = []
                 with z.open(entry) as f:
                     while True:
