@@ -1,0 +1,174 @@
+name: NEXUS FORGE Isolated Restore Test
+
+# Restores a verified backup into an isolated NON-production Convex deployment, compares
+# it with the backup, then returns the target to its pre-test state. It never loads the
+# production CONVEX_DEPLOY_KEY and refuses any key that is not a dev key for the named target.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_restore_test:
+        description: "Confirm: replace ALL data in the named non-production target, then return it"
+        required: true
+        type: boolean
+        default: false
+      target_deployment:
+        description: "Non-production Convex deployment name (must match the dev deploy key)"
+        required: true
+        type: string
+      archive_key:
+        description: "Object key of the verified archive in the backup bucket"
+        required: true
+        type: string
+      expected_sha256:
+        description: "SHA-256 recorded for that archive in its receipt"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-forge-restore-test
+  cancel-in-progress: false
+
+jobs:
+  confirmation-required:
+    name: Restore test not confirmed - nothing restored
+    if: ${{ inputs.confirm_restore_test != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Refuse unconfirmed restore test
+        shell: bash
+        run: |
+          echo "::error::Nothing was restored. A restore test requires confirm_restore_test=true."
+          exit 1
+
+  restore-compare-return:
+    name: Restore into isolated target, compare, and return
+    if: ${{ inputs.confirm_restore_test == true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Only the restore-target key is loaded. The production CONVEX_DEPLOY_KEY is never referenced here.
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_RESTORE_TEST_DEPLOY_KEY }}
+      TARGET_DEPLOYMENT: ${{ inputs.target_deployment }}
+      PRODUCTION_DEPLOYMENT: ${{ vars.CONVEX_PRODUCTION_DEPLOYMENT || 'tame-rat-826' }}
+      ARCHIVE_KEY: ${{ inputs.archive_key }}
+      EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+      BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+      BACKUP_S3_ENDPOINT: ${{ vars.BACKUP_S3_ENDPOINT }}
+      AWS_EC2_METADATA_DISABLED: "true"
+      AWS_ACCESS_KEY_ID: ${{ secrets.BACKUP_S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_S3_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ vars.BACKUP_S3_REGION }}
+      AWS_DEFAULT_REGION: ${{ vars.BACKUP_S3_REGION }}
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
+    steps:
+      - name: Checkout verifiers
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard isolated non-production target
+        shell: bash
+        env:
+          CONFIRM_RESTORE_TEST: ${{ inputs.confirm_restore_test }}
+        run: |
+          set -euo pipefail
+          [[ "$CONFIRM_RESTORE_TEST" == "true" ]] || { echo "::error::confirm_restore_test must be true."; exit 1; }
+          missing=0
+          for name in CONVEX_DEPLOY_KEY AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY BACKUP_S3_BUCKET BACKUP_S3_ENDPOINT AWS_REGION; do
+            if [[ -z "${!name:-}" ]]; then echo "::error::Required setting is missing: $name"; missing=1; fi
+          done
+          [[ "$missing" == "0" ]] || { echo "::error::CONVEX_RESTORE_TEST_DEPLOY_KEY must be a dev deploy key for the restore target."; exit 1; }
+          [[ "$TARGET_DEPLOYMENT" =~ ^[a-z]+-[a-z]+-[0-9]+$ ]] || { echo "::error::target_deployment must be a Convex deployment name like quick-rabbit-810."; exit 1; }
+          if [[ "$TARGET_DEPLOYMENT" == "$PRODUCTION_DEPLOYMENT" ]]; then
+            echo "::error::Refusing: target_deployment is the production deployment."; exit 1
+          fi
+          # Deploy keys start with their kind and deployment name. Only a dev key for exactly
+          # the named target is accepted; prod and preview keys are refused. The key itself is never printed.
+          if [[ "$CONVEX_DEPLOY_KEY" == prod:* ]]; then
+            echo "::error::Refusing: the restore-test key is a production deploy key."; exit 1
+          fi
+          if [[ "$CONVEX_DEPLOY_KEY" != "dev:${TARGET_DEPLOYMENT}|"* ]]; then
+            echo "::error::Refusing: the restore-test key is not a dev deploy key for $TARGET_DEPLOYMENT."; exit 1
+          fi
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::expected_sha256 must be 64 lowercase hex characters."; exit 1; }
+          [[ "$ARCHIVE_KEY" =~ ^nexus-forge/live/[A-Za-z0-9._-]+\.zip$ ]] || { echo "::error::archive_key must be a nexus-forge/live/*.zip object."; exit 1; }
+          [[ "$BACKUP_S3_ENDPOINT" =~ ^https:// ]] || { echo "::error::BACKUP_S3_ENDPOINT must be https."; exit 1; }
+          aws configure set default.s3.addressing_style path
+          echo "Target $TARGET_DEPLOYMENT is a dev deployment and not $PRODUCTION_DEPLOYMENT; key values are not printed."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download and verify the backup archive
+        id: archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/restore-test"; mkdir -p "$WORK"
+          aws s3api get-object --endpoint-url "$BACKUP_S3_ENDPOINT" --bucket "$BACKUP_S3_BUCKET" --key "$ARCHIVE_KEY" "$WORK/backup.zip" > /dev/null
+          SHA="$(sha256sum "$WORK/backup.zip" | cut -d' ' -f1)"; BYTES="$(stat -c '%s' "$WORK/backup.zip")"
+          if [[ "$SHA" != "$EXPECTED_SHA256" ]]; then
+            echo "::error::Downloaded archive SHA-256 $SHA does not match expected $EXPECTED_SHA256."; exit 1
+          fi
+          echo "Backup archive verified: bytes=$BYTES sha256=$SHA"
+          CAPTURE="$(basename "$ARCHIVE_KEY" .zip)"
+          echo "test_key=restore-tests/$CAPTURE/run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Snapshot the target before restoring
+        shell: bash
+        env:
+          TEST_KEY: ${{ steps.archive.outputs.test_key }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/restore-test"
+          npx --yes convex@1.41.0 export --include-file-storage --path "$WORK/pre-restore.zip"
+          test -s "$WORK/pre-restore.zip"
+          echo "Pre-restore snapshot: bytes=$(stat -c '%s' "$WORK/pre-restore.zip") sha256=$(sha256sum "$WORK/pre-restore.zip" | cut -d' ' -f1)"
+          # Keep a durable copy so the target can be returned even if this run dies mid-way.
+          aws s3api put-object --endpoint-url "$BACKUP_S3_ENDPOINT" --bucket "$BACKUP_S3_BUCKET" \
+            --key "nexus-forge/$TEST_KEY/pre-restore.zip" --body "$WORK/pre-restore.zip" > /dev/null
+
+      - name: Restore backup into the isolated target (replace all)
+        id: restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "started=true" >> "$GITHUB_OUTPUT"
+          npx --yes convex@1.41.0 import --replace-all --yes "$RUNNER_TEMP/restore-test/backup.zip"
+
+      - name: Compare restored target with the backup
+        shell: bash
+        env:
+          TEST_KEY: ${{ steps.archive.outputs.test_key }}
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/restore-test"
+          npx --yes convex@1.41.0 export --include-file-storage --path "$WORK/restored.zip"
+          python3 scripts/compare-restore.py --expected "$WORK/backup.zip" --actual "$WORK/restored.zip" --report "$WORK/restore-comparison.json"
+          cp "$WORK/restored.zip" "$WORK/restored-copy.zip"
+          python3 scripts/check-recovery-point.py \
+            --archive "$WORK/restored.zip" --source "$WORK/restored-copy.zip" \
+            --expected-sha256 "$(sha256sum "$WORK/restored.zip" | cut -d' ' -f1)" \
+            --captured-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --report "$WORK/restored-integrity.json"
+          aws s3api put-object --endpoint-url "$BACKUP_S3_ENDPOINT" --bucket "$BACKUP_S3_BUCKET" \
+            --key "nexus-forge/$TEST_KEY/restore-comparison.json" --body "$WORK/restore-comparison.json" > /dev/null
+
+      - name: Return the target to its pre-test state
+        if: always() && steps.restore.outputs.started == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/restore-test"
+          npx --yes convex@1.41.0 import --replace-all --yes "$WORK/pre-restore.zip"
+          npx --yes convex@1.41.0 export --include-file-storage --path "$WORK/returned.zip"
+          python3 scripts/compare-restore.py --expected "$WORK/pre-restore.zip" --actual "$WORK/returned.zip" --report "$WORK/return-comparison.json"
+          echo "Target $TARGET_DEPLOYMENT returned to its pre-test state."
