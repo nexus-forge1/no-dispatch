@@ -88,10 +88,12 @@ jobs:
           ARCHIVE_KEY: ${{ steps.keys.outputs.archive_key }}
         run: |
           set -euo pipefail
+          # s3api get-object signs with the request payload hash; some S3-compatible
+          # gateways (e.g. Supabase) reject the CLI streaming GET's UNSIGNED-PAYLOAD signature.
           if [[ -n "$BACKUP_S3_ENDPOINT" ]]; then
-            aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3 cp "s3://$BACKUP_S3_BUCKET/$ARCHIVE_KEY" "$RUNNER_TEMP/nexus-backup/retrieved.zip" --only-show-errors
+            aws --endpoint-url "$BACKUP_S3_ENDPOINT" s3api get-object --bucket "$BACKUP_S3_BUCKET" --key "$ARCHIVE_KEY" "$RUNNER_TEMP/nexus-backup/retrieved.zip" >/dev/null
           else
-            aws s3 cp "s3://$BACKUP_S3_BUCKET/$ARCHIVE_KEY" "$RUNNER_TEMP/nexus-backup/retrieved.zip" --only-show-errors
+            aws s3api get-object --bucket "$BACKUP_S3_BUCKET" --key "$ARCHIVE_KEY" "$RUNNER_TEMP/nexus-backup/retrieved.zip" >/dev/null
           fi
           test -s "$RUNNER_TEMP/nexus-backup/retrieved.zip"
           cmp --silent "$RUNNER_TEMP/nexus-backup/source.zip" "$RUNNER_TEMP/nexus-backup/retrieved.zip"
