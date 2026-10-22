@@ -51,6 +51,20 @@ describe('recovery-point verification',()=>{
   const f=fixture({'_tables/documents.jsonl':'{"name":"missions","id":1}\n{"name":"artifacts","id":2}\n{"name":"privateMedia","id":3}\n','privateMedia/documents.jsonl':'{"_id":"media1","storageId":"file1"}\n'})
   expect(f.run().result).toMatchObject({passed:false,relationshipIssues:{'privateMedia:missing-original-file':1}})
  })
+ it('accepts Convex file-storage metadata and payloads without a registry mismatch',()=>{
+  const f=fixture({
+   '_tables/documents.jsonl':JSON.stringify({name:'missions',id:1})+'\n'+JSON.stringify({name:'artifacts',id:2})+'\n'+JSON.stringify({name:'privateMedia',id:3})+'\n',
+   '_storage/documents.jsonl':JSON.stringify({_id:'storage1',sha256:'0'.repeat(64)})+'\n',
+   '_storage/file1':'nexus-fixture-media-bytes',
+   'privateMedia/documents.jsonl':JSON.stringify({_id:'media1',storageId:'file1'})+'\n'})
+  const r=f.run()
+  expect(r.status).toBe(0)
+  expect(r.result).toMatchObject({passed:true,tableCount:3,documentCount:3,storagePayloads:1,privateMediaRecords:1,relationshipIssues:{}})
+ })
+ it('treats Convex _storage/documents.jsonl as file-storage metadata, not an unregistered table (regression)',()=>{
+  const f=fixture({'_storage/documents.jsonl':JSON.stringify({_id:'kg2file1',sha256:'x',size:3})+'\n'}),r=f.run()
+  expect(r.status).toBe(0);expect(r.result).toMatchObject({passed:true,tableCount:2,documentCount:2})
+ })
  it('checks archive integrity and never accepts a truncated ZIP merely because its hash was supplied',()=>{
   const f=fixture();const bytes=readFileSync(f.archive).subarray(0,60);writeFileSync(f.archive,bytes);writeFileSync(f.source,bytes)
   const hash=createHash('sha256').update(bytes).digest('hex')
@@ -60,8 +74,39 @@ describe('recovery-point verification',()=>{
   const a=fixture();writeFileSync(a.report,'previous');expect(a.run().result.failureCode).toBe('REPORT_NOT_WRITTEN');expect(readFileSync(a.report,'utf8')).toBe('previous')
   const b=fixture();expect(b.run({captured:'2026-10-18T00:00:00'}).result.failureCode).toBe('CAPTURE_TIME_REQUIRES_TIMEZONE')
  })
- it('treats Convex _storage/documents.jsonl as file-storage metadata, not an unregistered table (regression)',()=>{
-  const f=fixture({'_storage/documents.jsonl':JSON.stringify({_id:'kg2file1',sha256:'x',size:3})+'\n'}),r=f.run()
-  expect(r.status).toBe(0);expect(r.result).toMatchObject({passed:true,tableCount:2,documentCount:2})
+})
+describe('backup receipt build and validation',()=>{
+ function receiptFixture(trigger:string){
+  const f=fixture(),captureKey='live-2026-10-22T070000Z-run-123-1',archiveKey='nexus-forge/live/'+captureKey+'.zip'
+  const run=f.run({captured:new Date(Date.now()-10000).toISOString()})
+  if(run.status!==0)throw new Error('fixture checker failed: '+run.stdout)
+  const captured:string=JSON.parse(readFileSync(f.report,'utf8')).capturedAt
+  const receiptPath=join(f.root,'receipt.json')
+  const args=[resolve('scripts/backup-receipt.py'),'build','--archive',f.archive,'--retrieved',f.archive,'--report',f.report,'--reported-sha256',f.sha,'--reported-bytes',String(readFileSync(f.archive).length),'--capture-key',captureKey,'--captured-at',captured,'--archive-key',archiveKey,'--report-key',archiveKey+'.verification.json','--commit-sha','a'.repeat(40),'--run-id','123','--run-url','https://example.invalid/runs/123','--bucket','nexus-forge-backups','--trigger-type',trigger,'--out',receiptPath]
+  return{f,captured,captureKey,archiveKey,receiptPath,args}
+ }
+ function validateReceipt(receiptPath:string,f:{sha:string},captured:string,captureKey:string,archiveKey:string){
+  const proc=spawnSync('python3',[resolve('scripts/backup-receipt.py'),'validate','--receipt',receiptPath,'--report',fixtureReport(receiptPath),'--expected-sha256',f.sha,'--expected-bytes',String(readFileSync(receiptPath.replace('receipt.json','saved.zip')).length),'--capture-key',captureKey,'--archive-key',archiveKey,'--report-key',archiveKey+'.verification.json','--commit-sha','a'.repeat(40),'--run-id','123'],{encoding:'utf8'})
+  return{status:proc.status,stdout:proc.stdout,result:JSON.parse(proc.stdout.trim())}
+ }
+ const fixtureReport=(receiptPath:string)=>receiptPath.replace('receipt.json','report.json')
+ it('records scheduled and manual trigger types and validates the stored receipt',()=>{
+  for(const trigger of['scheduled','manual']as const){
+   const r=receiptFixture(trigger)
+   const build=spawnSync('python3',r.args,{encoding:'utf8'})
+   expect(build.status).toBe(0)
+   expect(JSON.parse(build.stdout.trim())).toMatchObject({passed:true,captureKey:r.captureKey})
+   expect(JSON.parse(readFileSync(r.receiptPath,'utf8'))).toMatchObject({triggerType:trigger,liveExportConfirmed:true,restorePerformed:false})
+   const v=validateReceipt(r.receiptPath,r.f,r.captured,r.captureKey,r.archiveKey)
+   expect(v.status).toBe(0);expect(v.result).toMatchObject({passed:true,captureKey:r.captureKey})
+  }
+ })
+ it('rejects receipts with an unsupported trigger type',()=>{
+  const r=receiptFixture('manual')
+  expect(spawnSync('python3',r.args,{encoding:'utf8'}).status).toBe(0)
+  const tampered=JSON.parse(readFileSync(r.receiptPath,'utf8'));tampered.triggerType='timer-triggered'
+  writeFileSync(r.receiptPath,JSON.stringify(tampered))
+  const v=validateReceipt(r.receiptPath,r.f,r.captured,r.captureKey,r.archiveKey)
+  expect(v.status).toBe(1);expect(v.result.failureCode).toBe('RECEIPT_TRIGGER_TYPE_INVALID')
  })
 })
