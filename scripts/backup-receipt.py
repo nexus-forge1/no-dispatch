@@ -137,7 +137,7 @@ def build(args):
         "version": RECEIPT_VERSION,
         "captureKey": args.capture_key,
         "sourceEnvironment": "live",
-        "triggerType": "manual",
+        "triggerType": args.trigger_type,
         "liveExportConfirmed": True,
         "capturedAt": args.captured_at,
         "bucket": args.bucket,
@@ -186,6 +186,8 @@ def validate(args):
     for key, value, code in checks:
         if receipt.get(key) != value:
             raise Refused(code)
+    if receipt.get("triggerType") not in ("manual", "scheduled"):
+        raise Refused("RECEIPT_TRIGGER_TYPE_INVALID")
     for key in ("independentlyRetrieved", "byteIdenticalAfterRetrieval", "archiveVerificationPassed", "liveExportConfirmed"):
         if receipt.get(key) is not True:
             raise Refused("RECEIPT_FLAG_INVALID_" + key)
@@ -211,6 +213,7 @@ def main(argv=None):
         b.add_argument("--" + name, required=True)
     b.add_argument("--version-id", default="")
     b.add_argument("--etag", default="")
+    b.add_argument("--trigger-type", choices=("manual", "scheduled"), default="manual")
     v = sub.add_parser("validate")
     for name in ("receipt", "report", "expected-sha256", "expected-bytes", "capture-key", "archive-key", "report-key",
                  "commit-sha", "run-id"):
