@@ -4,7 +4,7 @@
 
 ## Safety guards
 - The production `CONVEX_DEPLOY_KEY` is never loaded. The only key used is the secret `CONVEX_RESTORE_TEST_DEPLOY_KEY`.
-- That key must be a **dev** deploy key for exactly the `target_deployment` input. Production (`prod:`) and preview keys are refused, as is any key for a different deployment.
+- That key must be a deploy key for **exactly** the `target_deployment` input, in either `dev:` or `prod:` kind (the platform's Testing deployment is itself a Convex production-kind deployment, so its key carries `prod:`). Preview keys and any key for a different deployment are refused.
 - `target_deployment` may not be the production deployment (`vars.CONVEX_PRODUCTION_DEPLOYMENT`, default `tame-rat-826`).
 - If you start it without `confirm_restore_test=true`, it fails on purpose with "Nothing was restored".
 
@@ -16,7 +16,7 @@
 5. Whenever an import has started, even after a failure, it re-imports the pre-test copy and checks that the target matches it again.
 
 ## Setup (one time)
-1. Create a dev deploy key for the Testing deployment (Macaly Managed Testing `quick-rabbit-810`) in Convex: Dashboard → that deployment → Settings → Deploy keys.
+1. Obtain the deploy key for the Testing deployment (Macaly Managed Testing `quick-rabbit-810`) — its Convex kind is `prod:quick-rabbit-810|…` because the Testing deployment is Convex production-kind.
 2. Add it to GitHub under no-dispatch → Settings → Secrets and variables → Actions → New repository secret, with the name `CONVEX_RESTORE_TEST_DEPLOY_KEY`. Never paste it into chat.
 
 ## Scope
