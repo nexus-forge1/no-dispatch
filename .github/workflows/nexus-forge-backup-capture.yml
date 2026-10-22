@@ -1,8 +1,7 @@
 name: NEXUS FORGE Verified Backup Capture
 
 on:
-  schedule:
-    - cron: "0 5 * * *" # Daily at 05:00 UTC
+  # Automatic Live capture is intentionally paused. Run manually only after explicit approval.
   workflow_dispatch:
     inputs:
       confirm_live_export:
