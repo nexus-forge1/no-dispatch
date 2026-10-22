@@ -269,12 +269,32 @@ jobs:
           # Retention policy: keep 30 daily recovery points. This step NEVER deletes;
           # excess is only counted and flagged for operator review (BACKUP_POLICY_DRAFT).
           # Single listing page covers up to 1000 keys (about three years of daily points).
+          # Never print raw AWS CLI errors here: keep credentials, endpoint details, and
+          # provider response bodies out of workflow logs while surfacing a useful class.
+          safe_listing_error() {
+            local file="$1"
+            if grep -qiE 'AccessDenied|Access Denied|Forbidden' "$file"; then
+              printf 'permission denied'
+            elif grep -qiE 'InvalidAccessKeyId|SignatureDoesNotMatch|InvalidToken|security token' "$file"; then
+              printf 'storage credentials or request signature rejected'
+            elif grep -qiE 'NoSuchBucket|bucket.*does not exist|specified bucket' "$file"; then
+              printf 'configured bucket not found'
+            elif grep -qiE 'EndpointConnectionError|Could not connect|timed out|Name or service not known|Connection refused|Could not resolve' "$file"; then
+              printf 'storage endpoint or network connection failed'
+            else
+              printf 'unclassified storage API error (details redacted)'
+            fi
+          }
           if ! s3 s3api list-objects-v2 --bucket "$BACKUP_S3_BUCKET" --prefix "nexus-forge/live/" --output json > "$RUNNER_TEMP/nexus-backup/retention-live.json" 2>"$RUNNER_TEMP/nexus-backup/retention.err"; then
-            echo "::warning::Retention inventory listing failed; the verified capture above is unaffected. Nothing was deleted."
+            REASON="$(safe_listing_error "$RUNNER_TEMP/nexus-backup/retention.err")"
+            echo "::warning::Retention inventory listing failed ($REASON); the verified capture above is unaffected. Nothing was deleted."
+            echo "- Retention inventory: **warning** — $REASON. Nothing was deleted." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if ! s3 s3api list-objects-v2 --bucket "$BACKUP_S3_BUCKET" --prefix "nexus-forge/receipts/" --output json > "$RUNNER_TEMP/nexus-backup/retention-receipts.json" 2>>"$RUNNER_TEMP/nexus-backup/retention.err"; then
-            echo "::warning::Receipt inventory listing failed; the verified capture above is unaffected. Nothing was deleted."
+          if ! s3 s3api list-objects-v2 --bucket "$BACKUP_S3_BUCKET" --prefix "nexus-forge/receipts/" --output json > "$RUNNER_TEMP/nexus-backup/retention-receipts.json" 2>"$RUNNER_TEMP/nexus-backup/retention.err"; then
+            REASON="$(safe_listing_error "$RUNNER_TEMP/nexus-backup/retention.err")"
+            echo "::warning::Receipt inventory listing failed ($REASON); the verified capture above is unaffected. Nothing was deleted."
+            echo "- Receipt inventory: **warning** — $REASON. Nothing was deleted." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           POINTS="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("Contents") or []))' "$RUNNER_TEMP/nexus-backup/retention-live.json")"
