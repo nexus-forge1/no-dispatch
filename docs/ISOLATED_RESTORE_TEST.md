@@ -19,5 +19,8 @@
 1. Obtain the deploy key for the Testing deployment (Macaly Managed Testing `quick-rabbit-810`) — its Convex kind is `prod:quick-rabbit-810|…` because the Testing deployment is Convex production-kind.
 2. Add it to GitHub under no-dispatch → Settings → Secrets and variables → Actions → New repository secret, with the name `CONVEX_RESTORE_TEST_DEPLOY_KEY`. Never paste it into chat.
 
+## Run history
+- 2026-10-22 run `39801571528` (passed, ~8m10s): restored verified Live backup `live-2026-10-22T071018Z-run-39738421885-1.zip` into Testing `quick-rabbit-810`; restore comparison 53 non-empty tables / 2,119 documents, zero mismatches; target returned to pre-test state (93 tables / 3,139 documents, passed). Evidence in the bucket under `nexus-forge/restore-tests/…/run-39801571528-1/`.
+
 ## Scope
 This proves the database restores into an isolated deployment. It does not prove that application code, auth, external Macaly assets, or the whole service can be recovered within the four-hour target.
