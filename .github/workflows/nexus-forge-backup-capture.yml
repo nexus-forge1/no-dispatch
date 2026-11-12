@@ -2,10 +2,11 @@ name: NEXUS FORGE Verified Backup Capture
 
 on:
   # Recurring timer capture enabled by the operator's finish-everything instruction on 2026-10-22.
-  # Cron is UTC: 07:00 UTC is 03:00 America/New_York during daylight time (04:00 in winter).
+  # Twice daily, off the hour, gives the 24-hour freshness target scheduling margin.
+  # GitHub timers can still be delayed; observed receipt freshness remains the acceptance evidence.
   # Manual runs still require confirm_live_export=true in the dispatch form; nothing else changed.
   schedule:
-    - cron: "0 7 * * *"
+    - cron: "17 7,19 * * *"
   workflow_dispatch:
     inputs:
       confirm_live_export:
@@ -251,10 +252,10 @@ jobs:
           python3 scripts/backup-receipt.py validate --receipt "$CHECK_DIR/receipt.json" --report "$CHECK_DIR/verification.json" --expected-sha256 "$REPORTED_SHA" --expected-bytes "$REPORTED_BYTES" --capture-key "$CAPTURE_KEY" --archive-key "$ARCHIVE_KEY" --report-key "$REPORT_KEY" --commit-sha "$GITHUB_SHA" --run-id "$GITHUB_RUN_ID"
           {
             echo "## Verified backup captured"
-            echo "- Capture key: `$CAPTURE_KEY`"
-            echo "- Archive key: `$ARCHIVE_KEY`"
+            echo "- Capture key: $CAPTURE_KEY"
+            echo "- Archive key: $ARCHIVE_KEY"
             echo "- Bytes: $REPORTED_BYTES"
-            echo "- SHA-256: `$REPORTED_SHA`"
+            echo "- SHA-256: $REPORTED_SHA"
             echo "- Independent retrieval, digest, byte count, recovery-point report and stored receipt all verified."
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -297,15 +298,22 @@ jobs:
             echo "- Receipt inventory: **warning** — $REASON. Nothing was deleted." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          POINTS="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("Contents") or []))' "$RUNNER_TEMP/nexus-backup/retention-live.json")"
-          RECEIPTS="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(len(d.get("Contents") or []))' "$RUNNER_TEMP/nexus-backup/retention-receipts.json")"
-          [[ "$POINTS" =~ ^[0-9]+$ && "$RECEIPTS" =~ ^[0-9]+$ ]] || { echo "::error::Retention inventory could not be counted."; exit 1; }
-          {
-            echo "## Recovery-point retention inventory"
-            echo "- Live archive objects: $POINTS (target: keep $RETENTION_TARGET daily recovery points)"
-            echo "- Receipt objects: $RECEIPTS"
-            echo "- Inventory only: nothing is deleted automatically; excess is flagged for operator review."
-          } >> "$GITHUB_STEP_SUMMARY"
-          if (( POINTS > RETENTION_TARGET )); then
-            echo "::warning::Recovery points exceed the ${RETENTION_TARGET}-point retention target ($POINTS stored). Excess is flagged for operator review; nothing was deleted."
-          fi
+          python3 scripts/retention-inventory.py "$RUNNER_TEMP/nexus-backup/retention-live.json" "$RUNNER_TEMP/nexus-backup/retention-receipts.json" > "$RUNNER_TEMP/nexus-backup/retention-summary.json"
+          python3 - "$RUNNER_TEMP/nexus-backup/retention-summary.json" "$GITHUB_STEP_SUMMARY" "$RETENTION_TARGET" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as f:
+              report = json.load(f)
+          with open(sys.argv[2], "a") as f:
+              f.write("\n## Recovery-point retention inventory\n")
+              f.write(f"- ZIP archives: {report['archiveObjects']}\n")
+              f.write(f"- Receipt objects: {report['receiptObjects']}\n")
+              f.write(f"- Archive/receipt key pairs: {report['archiveReceiptPairs']}\n")
+              f.write(f"- Distinct UTC capture days with pairs: {report['distinctUtcCaptureDays']} (target: {sys.argv[3]})\n")
+              f.write("- Key inventory only; historical receipt contents were not revalidated. No objects deleted.\n")
+          if report["distinctUtcCaptureDays"] < int(sys.argv[3]):
+              print("::warning::Fewer than the target number of distinct UTC capture days are inventoried.")
+          if report["distinctUtcCaptureDays"] > int(sys.argv[3]):
+              print("::warning::Daily recovery points exceed the retention target; review only, nothing deleted.")
+          if report["unrecognizedPairedCaptureKeys"]:
+              print("::warning::Some paired capture keys have unrecognized dates and are excluded from daily counts.")
+          PY
