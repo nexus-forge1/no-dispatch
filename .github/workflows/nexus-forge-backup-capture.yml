@@ -110,6 +110,27 @@ jobs:
         with:
           node-version: 22
 
+      - name: Record workflow trigger evidence
+        shell: bash
+        env:
+          TRIGGER_EVENT: ${{ github.event_name }}
+          TRIGGER_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os
+          print(json.dumps({
+              "version": "backup-trigger-evidence-v1",
+              "event": os.environ["TRIGGER_EVENT"],
+              "schedule": os.environ.get("TRIGGER_SCHEDULE") or None,
+              "workflowRef": os.environ["GITHUB_WORKFLOW_REF"],
+              "headSha": os.environ["GITHUB_SHA"],
+              "runId": os.environ["GITHUB_RUN_ID"],
+              "runAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "observedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "note": "Job observation time; not the scheduled due time or queue-entry time."
+          }, sort_keys=True))
+          PY
+
       - name: Export configured Live Convex deployment
         shell: bash
         run: |
@@ -303,6 +324,11 @@ jobs:
           import json, sys
           with open(sys.argv[1]) as f:
               report = json.load(f)
+          print(json.dumps({
+              "version": "retention-inventory-observation-v1",
+              **report,
+              "retentionTargetDays": int(sys.argv[3]),
+          }, sort_keys=True))
           with open(sys.argv[2], "a") as f:
               f.write("\n## Recovery-point retention inventory\n")
               f.write(f"- ZIP archives: {report['archiveObjects']}\n")
